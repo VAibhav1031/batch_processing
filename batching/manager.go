@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"io"
+	// "io"
 	"log"
 	"net/http"
 	"time"
@@ -54,27 +54,29 @@ func NewWorker(p *pgxpool.Pool) *Worker {
 	return &Worker{dbPool: p}
 }
 
+// validation needed so that we can send the right thing to the user
+// now we are  doing the thing where we have receiving the data a list of [json's..]
 func TaskHandler(jobChan chan Task) http.HandlerFunc {
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
+		// body, err := io.ReadAll(r.Body)
+		// if err != nil {
+		// 	http.Error(w, "Error reading request Body  ", http.StatusInternalServerError)
+		// 	return
+		// }
+		// defer r.Body.Close()
+
+		var tasks []Task
+		err := json.NewDecoder(r.Body).Decode(&tasks)
 		if err != nil {
-			http.Error(w, "Error reading request Body  ", http.StatusInternalServerError)
+			http.Error(w, "Error in serializing the json ", http.StatusBadRequest)
 			return
 		}
-		defer r.Body.Close()
 
-		var task Task
-		err = json.Unmarshal(body, &task)
-
-		if err != nil {
-			http.Error(w, "Error in serializing the json ", http.StatusInternalServerError)
+		for i := range tasks {
+			tasks[i].handleEmptyJsonFields()
+			jobChan <- tasks[i]
 		}
-
-		task.handleEmptyJsonFields()
-		// send .....
-		jobChan <- task
-
 		w.WriteHeader(http.StatusAccepted)
 	}
 }
@@ -83,7 +85,7 @@ func BatchCollector(jobChan chan Task, batchChan chan []Task) {
 
 	var batch []Task
 
-	ticker := time.NewTicker(5000 * time.Millisecond)
+	ticker := time.NewTicker(50 * time.Millisecond)
 
 	// loop (continous)
 
@@ -92,7 +94,7 @@ func BatchCollector(jobChan chan Task, batchChan chan []Task) {
 		// receiving here and checking
 		case job := <-jobChan:
 			batch = append(batch, job)
-			if len(batch) >= 1000 {
+			if len(batch) >= 2000 {
 				batchChan <- batch // send the commit goroutine
 				batch = nil
 			}
@@ -129,6 +131,7 @@ func (w *Worker) dbCommit(ctx context.Context, batch []Task) {
 	)
 
 	if err != nil {
+
 		log.Printf("Batch commit failed:", err)
 	} else {
 		log.Printf("Batch Commited Successfully")

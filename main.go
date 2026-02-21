@@ -9,10 +9,17 @@ import (
 	"log"
 	"net/http"
 	"os"
+
+	_ "net/http/pprof"
 )
 
 func main() {
 	// fmt.Println("hje")
+
+	go func() {
+		log.Println("Started the debug server on :6060")
+		log.Println(http.ListenAndServe("0.0.0.0:6060", nil))
+	}()
 
 	err := godotenv.Load()
 	if err != nil {
@@ -35,12 +42,12 @@ func main() {
 
 	log.Println("Database connection verified. System ready.")
 
-	jobChan := make(chan batching.Task, 1000)
-	batchChan := make(chan []batching.Task, 1000) // limit is 1000
+	jobChan := make(chan batching.Task, 1000000)
+	batchChan := make(chan []batching.Task, 1000000) // limit is 1000
 
 	worker := batching.NewWorker(pool)
 	go batching.BatchCollector(jobChan, batchChan)
-	for w := 0; w <= 3; w++ {
+	for w := 0; w <= 5; w++ {
 		go worker.StartDBWorker(batchChan) // it is the one which just commit the thing as it is comingt to it
 	}
 
