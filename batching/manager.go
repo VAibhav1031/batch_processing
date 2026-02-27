@@ -2,12 +2,14 @@ package batching
 
 import (
 	"context"
-	"encoding/json"
+	// "encoding/json"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	// "io"
 	"log"
-	"net/http"
+	// "net/http"
 	"time"
 )
 
@@ -34,7 +36,7 @@ type Task struct {
 
 // now any missing one we should have
 
-func (r *Task) handleEmptyJsonFields() {
+func (r *Task) HandleEmptyJsonFields() {
 
 	if r.Priority == nil {
 		p := PriorityMedium
@@ -54,38 +56,38 @@ func NewWorker(p *pgxpool.Pool) *Worker {
 	return &Worker{dbPool: p}
 }
 
-// validation needed so that we can send the right thing to the user
-// now we are  doing the thing where we have receiving the data a list of [json's..]
-func TaskHandler(jobChan chan Task) http.HandlerFunc {
+// // validation needed so that we can send the right thing to the user
+// // now we are  doing the thing where we have receiving the data a list of [json's..]
+// func TaskHandler(jobChan chan Task) http.HandlerFunc {
+//
+// 	return func(w http.ResponseWriter, r *http.Request) {
+// 		// body, err := io.ReadAll(r.Body)
+// 		// if err != nil {
+// 		// 	http.Error(w, "Error reading request Body  ", http.StatusInternalServerError)
+// 		// 	return
+// 		// }
+// 		// defer r.Body.Close()
+//
+// 		var tasks []Task
+// 		err := json.NewDecoder(r.Body).Decode(&tasks)
+// 		if err != nil {
+// 			http.Error(w, "Error in serializing the json ", http.StatusBadRequest)
+// 			return
+// 		}
+//
+// 		for i := range tasks {
+// 			tasks[i].handleEmptyJsonFields()
+// 			jobChan <- tasks[i]
+// 		}
+// 		w.WriteHeader(http.StatusAccepted)
+// 	}
+// }
 
-	return func(w http.ResponseWriter, r *http.Request) {
-		// body, err := io.ReadAll(r.Body)
-		// if err != nil {
-		// 	http.Error(w, "Error reading request Body  ", http.StatusInternalServerError)
-		// 	return
-		// }
-		// defer r.Body.Close()
+func BatchCollector(jobChan chan Task, finalBatchChan chan []Task, redisBatchChan chan []Task) {
 
-		var tasks []Task
-		err := json.NewDecoder(r.Body).Decode(&tasks)
-		if err != nil {
-			http.Error(w, "Error in serializing the json ", http.StatusBadRequest)
-			return
-		}
+	var megaBatch []Task
 
-		for i := range tasks {
-			tasks[i].handleEmptyJsonFields()
-			jobChan <- tasks[i]
-		}
-		w.WriteHeader(http.StatusAccepted)
-	}
-}
-
-func BatchCollector(jobChan chan Task, batchChan chan []Task) {
-
-	var batch []Task
-
-	ticker := time.NewTicker(50 * time.Millisecond)
+	ticker := time.NewTicker(1000 * time.Millisecond)
 
 	// loop (continous)
 
@@ -93,24 +95,37 @@ func BatchCollector(jobChan chan Task, batchChan chan []Task) {
 		select {
 		// receiving here and checking
 		case job := <-jobChan:
-			batch = append(batch, job)
-			if len(batch) >= 2000 {
-				batchChan <- batch // send the commit goroutine
-				batch = nil
+			megaBatch = append(megaBatch, job)
+
+			if len(megaBatch) >= 3500 {
+				finalBatchChan <- megaBatch // send the commit goroutine
+				log.Printf("Sent %d tasks directly to workers", len(megaBatch))
+				megaBatch = nil
+			}
+
+		case smallBatch := <-redisBatchChan:
+			megaBatch = append(megaBatch, smallBatch...)
+			if len(megaBatch) >= 4500 {
+				finalBatchChan <- megaBatch
+				log.Printf("Sent %d tasks directly to workers", len(megaBatch))
+				megaBatch = nil
+
 			}
 		case <-ticker.C:
-			if len(batch) > 0 {
-				batchChan <- batch
-				batch = nil
+			if len(megaBatch) > 0 {
+				finalBatchChan <- megaBatch
+				log.Printf("Sent %d tasks directly to workers", len(megaBatch))
+				megaBatch = nil
 			}
 
 		}
 	}
 }
 
-func (w *Worker) StartDBWorker(batchChan chan []Task) {
+func (w *Worker) StartDBWorker(finalBatchChan chan []Task) {
 
-	for batch := range batchChan {
+	for batch := range finalBatchChan {
+		log.Println("RECEIEVED!! the BATCH")
 		w.dbCommit(context.Background(), batch) //let this function be the private it is not needed to be imported
 	}
 }

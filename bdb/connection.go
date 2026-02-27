@@ -16,9 +16,10 @@ func ConnectDB(connString string) *pgxpool.Pool {
 
 	}
 
-	config.MaxConns = 101
+	config.MaxConns = 75
 	config.MinConns = 10
-	config.MaxConnIdleTime = time.Minute
+	config.MaxConnIdleTime = 10 * time.Second // fast failure (cause heavy write, we really dont want to hog the thread for thte thing)
+	config.MaxConnLifetime = 10 * time.Minute
 
 	pool, err := pgxpool.NewWithConfig(context.Background(), config)
 

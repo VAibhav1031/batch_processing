@@ -3,15 +3,82 @@ package main
 import (
 	// "fmt"
 	"context"
-	"github.com/VAibhav1031/batch_processing/batching"
-	"github.com/VAibhav1031/batch_processing/bdb"
-	"github.com/joho/godotenv"
+	// "encoding/json"
 	"log"
 	"net/http"
 	"os"
+	"time"
 
+	"github.com/VAibhav1031/batch_processing/batching"
+	"github.com/VAibhav1031/batch_processing/bdb"
+	"github.com/joho/godotenv"
+
+	"github.com/mailru/easyjson"
 	_ "net/http/pprof"
+
+	"github.com/redis/go-redis/v9"
 )
+
+var rdb *redis.Client
+
+func init() {
+	redisPass := os.Getenv("REDIS_PASSWORD")
+	rdb = redis.NewClient(&redis.Options{
+		Addr:     "redis:6379",
+		Password: redisPass,
+		DB:       0,
+	})
+
+	_, err := rdb.Ping(context.Background()).Result()
+	if err != nil {
+		log.Fatalf("Could not connect to the Redis: %v", err)
+	}
+
+	log.Println("Connected to Redis...")
+}
+
+func ConsumerFromRedis(redisBatchChan chan []batching.Task) {
+
+	log.Println("Redis consumer Goroutine Started... ")
+	for {
+
+		items, err := rdb.LPopCount(context.Background(), "task_queue", 1000).Result()
+
+		if err != nil {
+			if err == redis.Nil {
+				// never use the FatalF it stop the whole program ,like, means exit, and also initially service when start queue will be empty , so dont jump this big error and use  Fatalf
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+
+			log.Printf("Redis Pop error: %v", err)
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		if err == nil && len(items) > 0 {
+			// batching.TaskHandler(items, jobChan)
+
+			batch := make([]batching.Task, 0, len(items))
+
+			for _, s := range items {
+				var t batching.Task
+				if err := easyjson.Unmarshal([]byte(s), &t); err == nil {
+					t.HandleEmptyJsonFields()
+					batch = append(batch, t)
+				}
+			}
+
+			if len(batch) > 0 {
+				redisBatchChan <- batch
+				log.Printf("pushed the batch of %v length to channel", len(batch))
+			}
+
+		} else {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
 
 func main() {
 	// fmt.Println("hje")
@@ -42,15 +109,24 @@ func main() {
 
 	log.Println("Database connection verified. System ready.")
 
-	jobChan := make(chan batching.Task, 1000000)
-	batchChan := make(chan []batching.Task, 1000000) // limit is 1000
+	jobChan := make(chan batching.Task, 10000)
+	finalBatchChan := make(chan []batching.Task, 10000)
+	redisBatchChan := make(chan []batching.Task, 10000)
 
 	worker := batching.NewWorker(pool)
-	go batching.BatchCollector(jobChan, batchChan)
-	for w := 0; w <= 5; w++ {
-		go worker.StartDBWorker(batchChan) // it is the one which just commit the thing as it is comingt to it
+
+	go ConsumerFromRedis(redisBatchChan)
+
+	go batching.BatchCollector(jobChan, finalBatchChan, redisBatchChan)
+
+	for w := 0; w <= 10; w++ {
+		go worker.StartDBWorker(finalBatchChan) // it is the one which just commit the thing as it is comingt to it
 	}
 
-	http.HandleFunc("/tasks", batching.TaskHandler(jobChan))
-	log.Fatal(http.ListenAndServe(":7676", nil))
+	// http.HandleFunc("/tasks", batching.TaskHandler(jobChan))
+
+	// log.Fatal(http.ListenAndServe(":7676", nil))
+
+	log.Println("All workers started. Consuming from Redis...")
+	select {} // T
 }
