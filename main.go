@@ -12,8 +12,9 @@ import (
 	"github.com/VAibhav1031/batch_processing/batching"
 	"github.com/VAibhav1031/batch_processing/bdb"
 	"github.com/joho/godotenv"
-
 	"github.com/mailru/easyjson"
+
+	// "github.com/mailru/easyjson"
 	_ "net/http/pprof"
 
 	"github.com/redis/go-redis/v9"
@@ -42,7 +43,7 @@ func ConsumerFromRedis(redisBatchChan chan []batching.Task) {
 	log.Println("Redis consumer Goroutine Started... ")
 	for {
 
-		items, err := rdb.LPopCount(context.Background(), "task_queue", 1000).Result()
+		items, err := rdb.LPopCount(context.Background(), "task_queue", 1200).Result()
 
 		if err != nil {
 			if err == redis.Nil {
@@ -119,8 +120,8 @@ func main() {
 
 	go batching.BatchCollector(jobChan, finalBatchChan, redisBatchChan)
 
-	for w := 0; w <= 10; w++ {
-		go worker.StartDBWorker(finalBatchChan) // it is the one which just commit the thing as it is comingt to it
+	for w := 0; w <= 12; w++ {
+		go worker.StartDBWorker(w+1, finalBatchChan) // it is the one which just commit the thing as it is comingt to it
 	}
 
 	// http.HandleFunc("/tasks", batching.TaskHandler(jobChan))

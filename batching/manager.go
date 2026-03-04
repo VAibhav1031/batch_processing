@@ -2,10 +2,15 @@ package batching
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"os"
+
 	// "encoding/json"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/mailru/easyjson"
 
 	// "io"
 	"log"
@@ -33,6 +38,9 @@ type Task struct {
 	Priority    *string    `json:"priority,omitempty"`
 	Duedate     *time.Time `json:"due_date"` // it is something like not necessary you can give or not
 }
+
+// easyjson:json
+type TaskList []Task
 
 // now any missing one we should have
 
@@ -105,7 +113,7 @@ func BatchCollector(jobChan chan Task, finalBatchChan chan []Task, redisBatchCha
 
 		case smallBatch := <-redisBatchChan:
 			megaBatch = append(megaBatch, smallBatch...)
-			if len(megaBatch) >= 4500 {
+			if len(megaBatch) >= 5500 {
 				finalBatchChan <- megaBatch
 				log.Printf("Sent %d tasks directly to workers", len(megaBatch))
 				megaBatch = nil
@@ -122,15 +130,82 @@ func BatchCollector(jobChan chan Task, finalBatchChan chan []Task, redisBatchCha
 	}
 }
 
-func (w *Worker) StartDBWorker(finalBatchChan chan []Task) {
+// there is a two  thing we have to work on  first is that  we have to open the file and  put all the task thing  batch-wise , and after sucessfull commit we remove or clear the file , i would say so , and there would  condition like even before putting thing in the batch file , wer have to check it hasa to tbe empty , it is just like aground , wehere we can have thing  if it hads content alrteady there then we habve
+
+// securrity-wise this  file need to be important ,  like for  anyone taking over our server (which rarely -but can ) is that they can target the thing to these file where they can really make , privilege or  some rule  we have to decide
+// there should be one function (go routine) which check is there
+
+func saveToFile() {
+	file, err := os.OpenFile("batch_segment.txt", os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		log.Fatal("Failed to open the file")
+	}
+
+	defer file.Close()
+
+}
+func (w *Worker) StartDBWorker(id int, finalBatchChan chan []Task) {
+
+	file_name := fmt.Sprintf("buffer_worker_%d.tmp", id)
+
+	file, err := os.OpenFile(file_name, os.O_RDWR|os.O_CREATE, 0666)
+	if err != nil {
+		log.Fatal("Failed to open the file")
+	}
+
+	defer file.Close()
+
+	// offset , and whence ,  offset means how much byte to move the pointer,  adn  whence is the relative positoin you want to calculate the thing , 0 or SeekStart--> beginning of the file , 1 or SeekCurrent --> current position of the pointer, 2 or SeekEnd --> cursor last pistioon in the file ,
+
+	// see Seek can be used to set the position and get the current position ,  of the file
+	// check the current_pos of the  pointer like if it is 0 then  it is okay we continue if not then we do
+	// pos,err := file.Seek(0,io.SeekCurrent)  // here 0 means no change in the cursor position , whence is the relative position , sicne cursor is not moved and whence is SeekCurrent would give current position of the cursor and we will use that  to determine thing
+
+	tries := 0
+	info, err := file.Stat()
+	if err == nil && info.Size() > 0 {
+		log.Println("Recovering uncommited data ")
+		//  wer have to commit to the db ,  plus we have to maintain the per worker max retries if we say so , using map or something
+
+		// read from the file and then
+		data, err := io.ReadAll(file)
+		if err != nil {
+			var recoveredBatch TaskList
+
+			if err := easyjson.Unmarshal(data, &recoveredBatch); err == nil {
+				w.dbCommit(context.Background(), recoveredBatch, file)
+			}
+		}
+
+		file.Seek(0, 0)
+	}
 
 	for batch := range finalBatchChan {
-		log.Println("RECEIEVED!! the BATCH")
-		w.dbCommit(context.Background(), batch) //let this function be the private it is not needed to be imported
+		log.Println("RECEIEVED!! the BATCH") // check here the file is empty or not ,and then if not we call the function crash replay
+
+		// saving to the file
+
+		jsonData, err := easyjson.Marshal(TaskList(batch))
+		if err == nil {
+			file.Write(jsonData)
+		}
+		err = w.dbCommit(context.Background(), batch, file) //let this function be the private it is not needed to be imported
+
+		if err != nil {
+			tries++
+
+			if tries >= 3 {
+
+				log.Printf("Worker %d: Poison Pill detected , Moving  to dead letter", id)
+				file.Close() // we must close the file , before renaming thing , cause
+				os.Rename(file_name, fmt.Sprintf("dead_letter_%d_%d.json", id, time.Now().Unix()))
+			}
+		}
+
 	}
 }
 
-func (w *Worker) dbCommit(ctx context.Context, batch []Task) {
+func (w *Worker) dbCommit(ctx context.Context, batch []Task, file *os.File) error {
 	// now we haveto commit whole batch in go not the one by one , then it is waste
 	rows := [][]any{}
 
@@ -148,7 +223,10 @@ func (w *Worker) dbCommit(ctx context.Context, batch []Task) {
 	if err != nil {
 
 		log.Printf("Batch commit failed:", err)
-	} else {
-		log.Printf("Batch Commited Successfully")
+		return err
 	}
+	log.Printf("Batch Commited Successfully")
+	file.Truncate(0)
+	file.Seek(0, 0)
+	return nil
 }
