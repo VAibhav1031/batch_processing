@@ -1,4 +1,8 @@
 .env
 *.so
 
+*.tmp
+
+*.json
+
 *.sum
