@@ -16,10 +16,10 @@ import (
 
 	// "io"
 	"log"
-	// "net/http"
 	"time"
 )
 
+// worker struct , mainly for the sharing this globally to all the goroutines which require the dbPool pool value
 type Worker struct {
 	dbPool *pgxpool.Pool
 }
@@ -223,7 +223,7 @@ func (w *Worker) StartDBWorker(id int, finalBatchChan chan []Task) {
 					break
 				}
 				if isConnectionError(err) {
-					log.Println("Database is down. Waiting 5 seconds...")
+					log.Println("Worker %d: Database is down. Waiting 5 seconds...")
 					time.Sleep(5 * time.Second)
 					continue // Try the EXACT SAME batch again
 				}
@@ -249,19 +249,43 @@ func (w *Worker) StartDBWorker(id int, finalBatchChan chan []Task) {
 	}
 }
 
+type taskSource struct {
+	index int
+	tasks []Task
+}
+
+func (s *taskSource) Next() bool {
+	s.index++
+	return s.index < len(s.tasks)
+}
+
+func (s *taskSource) Values() ([]any, error) {
+	t := s.tasks[s.index]
+	return []any{t.Title, t.Description, t.Completion, t.Priority, t.Duedate, t.UserId}, nil
+}
+
+func (s *taskSource) Err() error {
+	return nil
+}
 func (w *Worker) dbCommit(ctx context.Context, batch []Task, file *os.File) error {
-	// now we haveto commit whole batch in go not the one by one , then it is waste
-	rows := [][]any{}
 
-	for _, j := range batch {
-		rows = append(rows, []any{j.Title, j.Description, j.Completion, j.Priority, j.Duedate, j.UserId})
+	source := &taskSource{
+		index: -1,
+		tasks: batch,
 	}
-
+	// now we haveto commit whole batch in go not the one by one , then it is waste
+	// rows := [][]any{}
+	//
+	// for _, j := range batch {
+	// 	rows = append(rows, []any{j.Title, j.Description, j.Completion, j.Priority, j.Duedate, j.UserId})
+	// }
+	// //
 	_, err := w.dbPool.CopyFrom(
 		ctx,
 		pgx.Identifier{"tasks"},
 		[]string{"title", "description", "completion", "priority", "due_date", "user_id"},
-		pgx.CopyFromRows(rows),
+		// pgx.CopyFromRows(rows),
+		source,
 	)
 
 	if err != nil {
@@ -273,4 +297,7 @@ func (w *Worker) dbCommit(ctx context.Context, batch []Task, file *os.File) erro
 	file.Truncate(0)
 	file.Seek(0, 0)
 	return nil
+
 }
+
+

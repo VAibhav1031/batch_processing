@@ -24,6 +24,7 @@ var rdb *redis.Client
 
 func init() {
 	redisPass := os.Getenv("REDIS_PASSWORD")
+	// basically we are defining the struct of the NewClient function parameter 
 	rdb = redis.NewClient(&redis.Options{
 		Addr:     "redis:6379",
 		Password: redisPass,
