@@ -28,7 +28,7 @@ jobs:
 
       - name: Build Executable
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/batcher ./main.go .
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/batcher ./main.go 
 
 
       - name: Log in to the Container registry
