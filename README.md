@@ -13,7 +13,6 @@ Created Batch processing fully in go , managing heavy write (POST) route,  and c
 
 > Recovery-After-Crash  and persistent is not implemented currently 
 
+> Latest binary is compiled and can be found at the `ghcr.io/VAibhav1031/batch_processing:latest`
+
 Currently the Batch Processing is in-memory one,  the feature in the pipeline... 
-
-
-
