@@ -10,8 +10,20 @@ Created Batch processing fully in go , managing heavy write (POST) route,  and c
 - Recovery-After-Crash : Manages the each batch using the WAL (Write Ahead Log) Concept , to  recover the batches and commit them to the db 
 - Persistent: all records are managed in the file , which in the sense file is also managed 
 
+## Getting-Binary:
+- Give the  permission to the binary
+  ```bash
+  chmod +x get_binary.sh
+  ```
 
-> Recovery-After-Crash  and persistent is not implemented currently 
+- usage:
+  ```bash
+  ./get_binary #if want to have the binary on the same location
+  ```
+- Use this for having at different location
+  ```bash
+  FILE_PATH=~/file_path ./get_binary
+  ```
 
 > Latest binary is compiled and can be found at the `ghcr.io/VAibhav1031/batch_processing:latest`
 
